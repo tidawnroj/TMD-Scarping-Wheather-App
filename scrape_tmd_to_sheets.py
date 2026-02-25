@@ -92,17 +92,17 @@ def scrape_tmd_weather_data(url="https://www.tmd.go.th/uploads/ReportsGenMetnet/
                         continue
                         
                     station = clean_thai_text(col0)
-                    pressure = str(row[2]).strip() if len(row) > 2 else ""
-                    temp = row[3] if len(row) > 3 else ""
-                    tmax = row[4] if len(row) > 4 else ""
+                    pressure = str(row[1]).strip() if len(row) > 1 else ""
+                    temp = row[2] if len(row) > 2 else ""
+                    tmax = row[3] if len(row) > 3 else ""
+                    tx_dif = row[4] if len(row) > 4 else ""
                     tmin = row[5] if len(row) > 5 else ""
-                    tx_dif = row[6] if len(row) > 6 else ""
-                    tn_dif = row[7] if len(row) > 7 else ""
-                    rain = row[8] if len(row) > 8 else ""
-                    r1jan = row[9] if len(row) > 9 else ""
-                    rh = row[10] if len(row) > 10 else ""
-                    wind_dir = row[11] if len(row) > 11 else ""
-                    wind_knot = row[12] if len(row) > 12 else ""
+                    tn_dif = row[6] if len(row) > 6 else ""
+                    rain = row[7] if len(row) > 7 else ""
+                    r1jan = row[8] if len(row) > 8 else ""
+                    rh = row[9] if len(row) > 9 else ""
+                    wind_dir = row[10] if len(row) > 10 else ""
+                    wind_knot = row[11] if len(row) > 11 else ""
                     
                     
                     safe_station_name = station.replace("/", "_").strip()
