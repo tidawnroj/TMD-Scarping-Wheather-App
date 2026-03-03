@@ -219,12 +219,12 @@ def scrape_tmd_weather_data(url="https://www.tmd.go.th/uploads/ReportsGenMetnet/
                     time.sleep(1)
                     
                     if count % 10 == 0:
-                        print(f"Progress: Uploaded {count}/{len(all_data)} stations...")
+                        print(f"Progress: Uploaded {count}/{len(all_data)} stations...", flush=True)
                         
                 except Exception as e:
-                    print(f"Failed to upload data for {sheet_title}: {e}")
+                    print(f"Failed to upload data for {sheet_title}: {e}", flush=True)
                 
-            print(f"Done! Successfully updated {count} tabs. 🎉")
+            print(f"Done! Successfully updated {count} tabs. 🎉", flush=True)
         else:
             print("No data extracted from PDF.")
             
