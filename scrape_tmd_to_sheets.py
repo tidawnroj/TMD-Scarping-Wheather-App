@@ -215,8 +215,8 @@ def scrape_tmd_weather_data(url="https://www.tmd.go.th/uploads/ReportsGenMetnet/
                     update_station_sheet(sheet_title, row, header)
                         
                     count += 1
-                    # Avoid hitting Google Sheets API rate limits
-                    time.sleep(1.5)
+                    # Avoid hitting Google Sheets API rate limits (60 req/min/user)
+                    time.sleep(1)
                     
                     if count % 10 == 0:
                         print(f"Progress: Uploaded {count}/{len(all_data)} stations...")
