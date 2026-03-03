@@ -7,6 +7,49 @@ import os
 import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import logging
+from functools import wraps
+
+# Set up basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def with_retry(max_retries=3, base_delay=2, max_delay=30, backoff_factor=2):
+    """Decorator to retry a function with exponential backoff upon gspread errors."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = base_delay
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    # Specifically catch gspread exceptions, particularly 503 HTTP errors
+                    if isinstance(e, gspread.exceptions.APIError):
+                        error_msg = str(e)
+                        if "503" in error_msg or "502" in error_msg or "500" in error_msg or "429" in error_msg:
+                            if attempt == max_retries:
+                                logging.error(f"Failed after {max_retries} retries: {e}")
+                                raise
+                            logging.warning(f"API Error ({error_msg}). Retrying in {delay}s (Attempt {attempt+1}/{max_retries})...")
+                            time.sleep(delay)
+                            delay = min(delay * backoff_factor, max_delay)
+                            continue
+                    
+                    # If it's another type of Google API network failure
+                    if "Connection" in str(e) or "Timeout" in str(e):
+                        if attempt == max_retries:
+                            logging.error(f"Network error after {max_retries} retries: {e}")
+                            raise
+                        logging.warning(f"Network Error. Retrying in {delay}s (Attempt {attempt+1}/{max_retries})...")
+                        time.sleep(delay)
+                        delay = min(delay * backoff_factor, max_delay)
+                        continue
+                        
+                    # If it's not a transient/retriable error, raise immediately
+                    logging.error(f"Non-retriable error: {e}")
+                    raise
+        return wrapper
+    return decorator
 
 def clean_thai_text(text):
     if not isinstance(text, str):
@@ -43,9 +86,13 @@ def authenticate_google_sheets():
     creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scopes)
     client = gspread.authorize(creds)
     
+    @with_retry(max_retries=4, base_delay=3)
+    def open_sheet_with_retry():
+        return client.open(SHEET_NAME)
+
     try:
         # Open the full spreadsheet instead of just sheet1
-        spreadsheet = client.open(SHEET_NAME)
+        spreadsheet = open_sheet_with_retry()
         return spreadsheet
     except gspread.exceptions.SpreadsheetNotFound:
         print(f"Error: Google Sheet '{SHEET_NAME}' not found.")
@@ -125,40 +172,51 @@ def scrape_tmd_weather_data(url="https://www.tmd.go.th/uploads/ReportsGenMetnet/
                       "Tx_dif", "Tn_dif", "Rain_mm", "R1Jan_mm", "RH_percent", "Wind_dir", "Wind_knot", "Extraction_Date"]
             
             # Fetch all existing worksheets to see which stations already have tabs
-            print("Fetching existing tabs in the spreadsheet...")
-            existing_worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
+            @with_retry(max_retries=3)
+            def fetch_worksheets():
+                return {ws.title: ws for ws in spreadsheet.worksheets()}
+                
+            existing_worksheets = fetch_worksheets()
             
             # --- AGGREGATE "ALL_STATIONS" TAB ---
             print("Uploading aggregated data to 'ALL_STATIONS' tab...")
             all_stations_title = "ALL_STATIONS"
-            if all_stations_title in existing_worksheets:
-                ws_all = existing_worksheets[all_stations_title]
-                ws_all.append_rows([row for _, row in all_data])
-            else:
-                ws_all = spreadsheet.add_worksheet(title=all_stations_title, rows="2000", cols="20")
-                existing_worksheets[all_stations_title] = ws_all
-                ws_all.append_rows([header] + [row for _, row in all_data])
+            @with_retry(max_retries=3)
+            def update_or_create_all_stations():
+                if all_stations_title in existing_worksheets:
+                    ws_all = existing_worksheets[all_stations_title]
+                    ws_all.append_rows([row for _, row in all_data])
+                else:
+                    ws_all = spreadsheet.add_worksheet(title=all_stations_title, rows="2000", cols="20")
+                    existing_worksheets[all_stations_title] = ws_all
+                    ws_all.append_rows([header] + [row for _, row in all_data])
+            
+            update_or_create_all_stations()
             # ------------------------------------
             
+            @with_retry(max_retries=2)
+            def update_station_sheet(sheet_title, row, headers):
+                if sheet_title in existing_worksheets:
+                    ws = existing_worksheets[sheet_title]
+                    ws.append_row(row)
+                else:
+                    print(f"  -> Creating new tab for {sheet_title}...")
+                    ws = spreadsheet.add_worksheet(title=sheet_title, rows="1000", cols="20")
+                    existing_worksheets[sheet_title] = ws
+                    # Append header and row for the new sheet
+                    ws.append_rows([headers, row])
+
             count = 0
             for safe_station_name, row in all_data:
                 try:
                     # Truncate title if extremely long, Google Sheets max tab name length is 100
                     sheet_title = safe_station_name[:100]
                     
-                    if sheet_title in existing_worksheets:
-                        ws = existing_worksheets[sheet_title]
-                        ws.append_row(row)
-                    else:
-                        print(f"  -> Creating new tab for {sheet_title}...")
-                        ws = spreadsheet.add_worksheet(title=sheet_title, rows="1000", cols="20")
-                        existing_worksheets[sheet_title] = ws
-                        # Append header and row for the new sheet
-                        ws.append_rows([header, row])
+                    update_station_sheet(sheet_title, row, header)
                         
                     count += 1
                     # Avoid hitting Google Sheets API rate limits
-                    time.sleep(1)
+                    time.sleep(1.5)
                     
                     if count % 10 == 0:
                         print(f"Progress: Uploaded {count}/{len(all_data)} stations...")
